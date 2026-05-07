@@ -1,9 +1,35 @@
+import logging
 import os
 import shlex
-import requests
+import sys
+
 import paramiko
+import requests
+import structlog
 import yaml
 from mcp.server.fastmcp import FastMCP
+
+# Structured logging per the AS215932 application logging contract
+# (hyrule-infra/docs/application-logging.md). hyrule-mcp speaks the MCP
+# stdio protocol on stdout, so logs MUST go to stderr — the parent
+# process (noc-agent) captures stderr into journald, where Vector picks
+# them up. SSH command output is intentionally returned as the tool
+# result, not logged — but if a future log line needs to include it,
+# keep `stdout` / `stderr` as named fields so the aggregator's redact
+# step can size-cap or strip them per docs/application-logging.md §4.
+structlog.configure(
+    processors=[
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso", utc=True, key="ts"),
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.dict_tracebacks,
+        structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+    cache_logger_on_first_use=True,
+)
+log = structlog.get_logger().bind(service="hyrule-mcp")
 
 mcp = FastMCP(
     "Hyrule MCP",

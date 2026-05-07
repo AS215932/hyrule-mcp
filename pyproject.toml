@@ -8,6 +8,7 @@ dependencies = [
     "paramiko>=4.0.0",
     "requests>=2.33.0",
     "pyyaml>=6.0",
+    "structlog>=24.4",
 ]
 
 [project.scripts]

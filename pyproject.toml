@@ -9,6 +9,14 @@ dependencies = [
     "requests>=2.33.0",
     "pyyaml>=6.0",
     "structlog>=24.4",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-mock>=3.14",
 ]
 
 [project.scripts]

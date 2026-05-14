@@ -715,7 +715,7 @@ def build_http_app() -> FastAPI:
     async def health():
         return {"status": "ok", "service": "hyrule-mcp", "transport": "streamable-http"}
 
-    app.mount("/mcp", mcp.streamable_http_app())
+    app.mount("/", mcp.streamable_http_app())
     return app
 
 

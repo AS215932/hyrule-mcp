@@ -170,3 +170,11 @@ def test_firewall_and_neighbor_helpers_shape_structured_results(monkeypatch):
     assert firewall["pf"]["rules"]
     assert firewall["nft"]["ruleset_json"] == {"nftables": []}
     assert ndp["entries"][0]["state"] == "REACHABLE"
+
+
+def test_http_app_exposes_streamable_mcp_at_documented_path():
+    app = mcp_server.build_http_app()
+    mounted_paths = [getattr(route, "path", None) for route in app.routes]
+
+    assert "/health" in mounted_paths
+    assert "" in mounted_paths

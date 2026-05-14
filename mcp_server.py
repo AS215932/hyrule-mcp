@@ -424,6 +424,44 @@ def icinga_get_host_state(host: str) -> dict[str, Any]:
         return {"host": host, "services": [], "error": str(exc)}
 
 
+@mcp.tool()
+def icinga_list_problems(object_type: str = "service", limit: int = 20) -> dict[str, Any]:
+    object_type = object_type.lower().strip()
+    limit = max(1, min(int(limit), 100))
+    endpoint = "hosts" if object_type == "host" else "services"
+    filter_expr = "host.state!=0" if endpoint == "hosts" else "service.state!=0"
+    auth = (ICINGA_API_USER, ICINGA_API_PASSWORD)
+    headers = {"Accept": "application/json"}
+    try:
+        response = requests.get(
+            f"{ICINGA_API_BASE}/v1/objects/{endpoint}",
+            params={"filter": filter_expr},
+            headers=headers,
+            auth=auth,
+            verify=ICINGA_VERIFY_TLS,
+            timeout=10,
+        )
+        response.raise_for_status()
+        results = response.json().get("results", [])
+        problems = []
+        for item in results[:limit]:
+            attrs = item.get("attrs", {})
+            name = item.get("name") or attrs.get("name")
+            problems.append(
+                {
+                    "name": name,
+                    "host": attrs.get("host_name") or name,
+                    "state": attrs.get("state"),
+                    "last_check": attrs.get("last_check"),
+                    "last_change": attrs.get("last_state_change"),
+                    "output": attrs.get("last_check_result", {}).get("output"),
+                }
+            )
+        return {"object_type": endpoint[:-1], "count": len(results), "returned": len(problems), "problems": problems}
+    except Exception as exc:
+        return {"object_type": endpoint[:-1], "count": 0, "returned": 0, "problems": [], "error": str(exc)}
+
+
 @action_tool()
 def icinga_acknowledge_alert(host_name: str, service_name: str, author: str, comment: str) -> dict[str, Any]:
     type_param = "Service" if service_name else "Host"

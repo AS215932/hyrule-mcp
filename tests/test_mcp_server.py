@@ -105,6 +105,40 @@ def test_icinga_host_state_uses_rest_payload(monkeypatch):
     assert result["services"][0]["output"] == "full"
 
 
+def test_icinga_list_service_problems_uses_rest_filter(monkeypatch):
+    seen = {}
+
+    def fake_get(*args, **kwargs):
+        seen.update(kwargs)
+        return _response(
+            {
+                "results": [
+                    {
+                        "name": "noc!disk",
+                        "attrs": {
+                            "host_name": "noc",
+                            "name": "disk",
+                            "state": 2,
+                            "last_check": 1,
+                            "last_state_change": 2,
+                            "last_check_result": {"output": "full"},
+                        },
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr(mcp_server.requests, "get", fake_get)
+
+    result = mcp_server.icinga_list_problems("service")
+
+    assert result["object_type"] == "service"
+    assert result["count"] == 1
+    assert result["problems"][0]["host"] == "noc"
+    assert result["problems"][0]["name"] == "noc!disk"
+    assert seen["params"]["filter"] == "service.state!=0"
+
+
 def test_icinga_acknowledge_alert_posts_rest_payload(monkeypatch):
     seen = {}
 

@@ -20,8 +20,8 @@ import requests
 import structlog
 import uvicorn
 import yaml
-from fastapi import FastAPI
 from mcp.server.fastmcp import FastMCP
+from starlette.responses import JSONResponse
 
 
 structlog.configure(
@@ -708,14 +708,13 @@ def _first_match(pattern: str, value: str, *, flags: int = 0) -> str | None:
     return match.group(1) if match else None
 
 
-def build_http_app() -> FastAPI:
-    app = FastAPI(title="Hyrule MCP Daemon")
+def build_http_app():
+    app = mcp.streamable_http_app()
 
-    @app.get("/health")
-    async def health():
-        return {"status": "ok", "service": "hyrule-mcp", "transport": "streamable-http"}
+    async def health(request):
+        return JSONResponse({"status": "ok", "service": "hyrule-mcp", "transport": "streamable-http"})
 
-    app.mount("/", mcp.streamable_http_app())
+    app.add_route("/health", health, methods=["GET"])
     return app
 
 

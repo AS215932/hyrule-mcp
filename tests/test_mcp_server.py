@@ -177,4 +177,4 @@ def test_http_app_exposes_streamable_mcp_at_documented_path():
     mounted_paths = [getattr(route, "path", None) for route in app.routes]
 
     assert "/health" in mounted_paths
-    assert "" in mounted_paths
+    assert "/mcp" in mounted_paths

@@ -28,23 +28,45 @@ from hyrule_mcp.settings import MCPSettings, SETTINGS
 
 
 READ_ONLY_COMMANDS = {
-    "hostname",
-    "uptime",
-    "wg",
-    "systemctl",
-    "rcctl",
-    "journalctl",
-    "dmesg",
-    "vtysh",
-    "dig",
-    "ping",
-    "traceroute",
-    "ip",
-    "ifconfig",
-    "pfctl",
-    "nft",
     "arp",
+    "cat",
+    "date",
+    "df",
+    "dig",
+    "dmesg",
+    "du",
+    "find",
+    "free",
+    "grep",
+    "hostname",
+    "head",
+    "id",
+    "ifconfig",
+    "ip",
+    "journalctl",
+    "knotc",
+    "ls",
+    "lsblk",
+    "mount",
     "ndp",
+    "netstat",
+    "nft",
+    "ping",
+    "pfctl",
+    "ps",
+    "pwd",
+    "rcctl",
+    "ss",
+    "stat",
+    "systemctl",
+    "tail",
+    "traceroute",
+    "uname",
+    "uptime",
+    "vtysh",
+    "wc",
+    "wg",
+    "whoami",
 }
 
 
@@ -128,14 +150,28 @@ async def ssh_run_command(host: str, command: str, username: str | None = None) 
     try:
         args = shlex.split(command)
     except ValueError as exc:
-        return error_result(tool=tool, target=host, summary="Command parse failed", error_type="policy_blocked", sanitized_error=sanitize_text(exc))
-    if not args or args[0] not in READ_ONLY_COMMANDS or _looks_mutative(args):
+        return error_result(
+            tool=tool,
+            target=host,
+            summary="Command parse failed",
+            error_type="policy_blocked",
+            sanitized_error=sanitize_text(exc),
+            data={"requested_command": sanitize_text(command), "policy": "read_only_diagnostics"},
+        )
+    policy_error = _read_only_policy_error(args)
+    if policy_error:
         return error_result(
             tool=tool,
             target=host,
             summary="Command rejected by diagnostic policy",
             error_type="policy_blocked",
-            sanitized_error="Raw command is not in the read-only diagnostic allowlist.",
+            sanitized_error=policy_error,
+            data={
+                "requested_command": sanitize_text(command),
+                "parsed_argv": [sanitize_text(part) for part in args],
+                "policy": "read_only_diagnostics",
+                "allowed_commands": sorted(READ_ONLY_COMMANDS),
+            },
         )
     return await execute_args(host, args, username=username, tool=tool)
 
@@ -546,6 +582,17 @@ def _looks_mutative(args: list[str]) -> bool:
     return bool(re.search(r"\b(restart|stop|start|enable|disable|rm|shutdown|reboot|configure|delete|flush|insert|replace|add)\b", blob))
 
 
+def _read_only_policy_error(args: list[str]) -> str | None:
+    if not args:
+        return "Raw command is empty."
+    command = args[0]
+    if command not in READ_ONLY_COMMANDS:
+        return f"Raw command '{sanitize_text(command)}' is not in the read-only diagnostic allowlist."
+    if _looks_mutative(args):
+        return "Raw command contains a mutative verb and is blocked by the read-only diagnostic allowlist policy."
+    return None
+
+
 def _line_summaries(value: str) -> list[str]:
     return [line.strip() for line in value.splitlines() if line.strip()][: SETTINGS.raw_output_line_limit]
 
@@ -612,4 +659,3 @@ def _cadence_seconds(events: list[dict[str, Any]]) -> int | None:
 def _first_match(pattern: str, value: str, *, flags: int = 0) -> str | None:
     match = re.search(pattern, value, flags=flags)
     return match.group(1) if match else None
-

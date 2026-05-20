@@ -37,8 +37,10 @@ Command-style returns preserve:
 - `stderr`
 - `exit_code`
 - `duration_ms`
-- `ssh_error`
 - `transport`
+- `data.command`
+- `data.argv`
+- `data.resolved_target`
 
 ## Core diagnostic families
 

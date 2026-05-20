@@ -59,6 +59,7 @@ async def _run_local(
     tool: str,
 ) -> dict[str, Any]:
     started = time.perf_counter()
+    context = _execution_context(profile, args, username=None, timeout_s=timeout_s, transport="local")
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -75,6 +76,7 @@ async def _run_local(
             duration_ms=int((time.perf_counter() - started) * 1000),
             transport="local",
             settings=settings,
+            data=context,
         )
     except TimeoutError:
         if "proc" in locals():
@@ -87,6 +89,7 @@ async def _run_local(
             error_type="timeout",
             sanitized_error=f"Command timed out after {timeout_s}s.",
             duration_ms=int((time.perf_counter() - started) * 1000),
+            data=context,
         )
     except Exception as exc:
         return error_result(
@@ -96,6 +99,7 @@ async def _run_local(
             error_type="transport_error",
             sanitized_error=sanitize_text(exc),
             duration_ms=int((time.perf_counter() - started) * 1000),
+            data={**context, "exception_type": type(exc).__name__},
         )
 
 
@@ -110,9 +114,11 @@ async def _run_ssh(
 ) -> dict[str, Any]:
     async with _SSH_SEMAPHORE:
         started = time.perf_counter()
+        command = command_string(args)
+        context = _execution_context(profile, args, username=username, timeout_s=timeout_s, transport="ssh")
         try:
             raw = await asyncio.wait_for(
-                asyncio.to_thread(_run_paramiko, profile, command_string(args), username, timeout_s),
+                asyncio.to_thread(_run_paramiko, profile, command, username, timeout_s),
                 timeout=timeout_s + 12,
             )
             return _command_payload(
@@ -124,6 +130,7 @@ async def _run_ssh(
                 duration_ms=int((time.perf_counter() - started) * 1000),
                 transport="ssh",
                 settings=settings,
+                data=context,
             )
         except TimeoutError:
             return error_result(
@@ -133,6 +140,7 @@ async def _run_ssh(
                 error_type="timeout",
                 sanitized_error=f"SSH command timed out after {timeout_s}s.",
                 duration_ms=int((time.perf_counter() - started) * 1000),
+                data=context,
             )
         except Exception as exc:
             return error_result(
@@ -142,6 +150,7 @@ async def _run_ssh(
                 error_type="transport_error",
                 sanitized_error=sanitize_text(exc),
                 duration_ms=int((time.perf_counter() - started) * 1000),
+                data={**context, "exception_type": type(exc).__name__},
             )
 
 
@@ -177,6 +186,7 @@ def _command_payload(
     duration_ms: int,
     transport: str,
     settings: MCPSettings,
+    data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     out = truncate_text(stdout, max_bytes=settings.raw_output_byte_limit, max_lines=settings.raw_output_line_limit)
     err = truncate_text(stderr, max_bytes=settings.raw_output_byte_limit, max_lines=settings.raw_output_line_limit)
@@ -195,6 +205,7 @@ def _command_payload(
         error_type=None if exit_code == 0 else "command_failed",
         sanitized_error=None if exit_code == 0 else (err.text or "Command exited non-zero"),
         transport=transport,
+        data=data,
     )
     return dump_result(result)
 
@@ -202,3 +213,26 @@ def _command_payload(
 def _is_local_target(profile: HostProfile, settings: MCPSettings) -> bool:
     return profile.name in settings.local_aliases or profile.address in settings.local_aliases
 
+
+def _execution_context(
+    profile: HostProfile,
+    args: list[str],
+    *,
+    username: str | None,
+    timeout_s: int,
+    transport: str,
+) -> dict[str, Any]:
+    effective_username = username or profile.user
+    return {
+        "command": sanitize_text(command_string(args)),
+        "argv": [sanitize_text(arg) for arg in args],
+        "transport": transport,
+        "timeout_s": timeout_s,
+        "resolved_target": {
+            "name": sanitize_text(profile.name),
+            "address": sanitize_text(profile.address),
+            "username": sanitize_text(effective_username),
+            "key_configured": profile.key is not None,
+            "key_path": sanitize_text(profile.key) if profile.key else None,
+        },
+    }

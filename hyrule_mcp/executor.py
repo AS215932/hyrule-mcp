@@ -59,7 +59,8 @@ async def _run_local(
     tool: str,
 ) -> dict[str, Any]:
     started = time.perf_counter()
-    context = _execution_context(profile, args, username=None, timeout_s=timeout_s, transport="local")
+    command = command_string(args)
+    context = _execution_context(profile, args, command=command, username=None, timeout_s=timeout_s, transport="local")
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -115,7 +116,7 @@ async def _run_ssh(
     async with _SSH_SEMAPHORE:
         started = time.perf_counter()
         command = command_string(args)
-        context = _execution_context(profile, args, username=username, timeout_s=timeout_s, transport="ssh")
+        context = _execution_context(profile, args, command=command, username=username, timeout_s=timeout_s, transport="ssh")
         try:
             raw = await asyncio.wait_for(
                 asyncio.to_thread(_run_paramiko, profile, command, username, timeout_s),
@@ -218,21 +219,22 @@ def _execution_context(
     profile: HostProfile,
     args: list[str],
     *,
+    command: str,
     username: str | None,
     timeout_s: int,
     transport: str,
 ) -> dict[str, Any]:
     effective_username = username or profile.user
+    sanitized_username = sanitize_text(effective_username) if effective_username else None
     return {
-        "command": sanitize_text(command_string(args)),
+        "command": sanitize_text(command),
         "argv": [sanitize_text(arg) for arg in args],
         "transport": transport,
         "timeout_s": timeout_s,
         "resolved_target": {
             "name": sanitize_text(profile.name),
             "address": sanitize_text(profile.address),
-            "username": sanitize_text(effective_username),
+            "username": sanitized_username,
             "key_configured": profile.key is not None,
-            "key_path": sanitize_text(profile.key) if profile.key else None,
         },
     }

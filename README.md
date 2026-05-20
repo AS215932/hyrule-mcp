@@ -42,6 +42,9 @@ Command-style returns preserve:
 - `data.argv`
 - `data.resolved_target`
 
+`data.resolved_target` reports the resolved target name, address, username, and
+whether an SSH key is configured; it does not include private key paths.
+
 ## Core diagnostic families
 
 - Monitoring:

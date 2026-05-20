@@ -3,6 +3,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import mcp_server
+import pytest
+from hyrule_mcp import executor
 from hyrule_mcp.settings import HostProfile, MCPSettings, SETTINGS
 from hyrule_mcp.sanitize import truncate_text
 from hyrule_mcp.tools import diagnostics
@@ -70,6 +72,99 @@ def test_ssh_escape_hatch_blocks_mutative_commands():
     assert result["ok"] is False
     assert result["error_type"] == "policy_blocked"
     assert "allowlist" in result["sanitized_error"]
+    assert result["data"]["requested_command"] == "systemctl restart noc-agent.service"
+    assert result["data"]["parsed_argv"] == ["systemctl", "restart", "noc-agent.service"]
+
+
+def test_ssh_escape_hatch_blocks_non_allowlisted_commands():
+    result = run(mcp_server.ssh_run_command("noc", "rm-status --help"))
+
+    assert result["ok"] is False
+    assert result["error_type"] == "policy_blocked"
+    assert "not in the read-only diagnostic allowlist" in result["sanitized_error"]
+    assert result["data"]["requested_command"] == "rm-status --help"
+    assert result["data"]["parsed_argv"] == ["rm-status", "--help"]
+    assert result["data"]["policy"] == "read_only_diagnostics"
+    assert result["data"]["allowed_commands"]
+    assert "ls" in result["data"]["allowed_commands"]
+
+
+def test_ssh_escape_hatch_reports_parse_failures():
+    result = run(mcp_server.ssh_run_command("noc", "ls 'unclosed"))
+
+    assert result["ok"] is False
+    assert result["error_type"] == "policy_blocked"
+    assert result["summary"] == "Command parse failed"
+    assert result["data"]["requested_command"] == "ls 'unclosed"
+    assert result["data"]["policy"] == "read_only_diagnostics"
+    assert "parsed_argv" not in result["data"]
+
+
+@pytest.mark.parametrize(
+    "command, expected_args",
+    [
+        ("ls -la /tmp", ["ls", "-la", "/tmp"]),
+        ("ps aux", ["ps", "aux"]),
+        ("df -h", ["df", "-h"]),
+        ("tail -n 50 /var/log/syslog", ["tail", "-n", "50", "/var/log/syslog"]),
+        ("journalctl -n 10", ["journalctl", "-n", "10"]),
+    ],
+)
+def test_ssh_escape_hatch_allows_common_read_only_commands(monkeypatch, command, expected_args):
+    seen = {}
+
+    async def fake_execute(host, args, username=None, timeout_s=None, settings=SETTINGS, tool="command"):
+        seen["host"] = host
+        seen["args"] = args
+        return {
+            "schema_version": "test",
+            "ok": True,
+            "tool": tool,
+            "target": host,
+            "summary": "ok",
+            "stdout": "total 0",
+            "stderr": "",
+            "exit_code": 0,
+            "duration_ms": 1,
+            "truncated": False,
+            "returned_bytes": 7,
+            "returned_lines": 1,
+            "error_type": None,
+            "sanitized_error": None,
+        }
+
+    monkeypatch.setattr(diagnostics, "execute_args", fake_execute)
+
+    result = run(mcp_server.ssh_run_command("ci", command))
+
+    assert result["ok"] is True
+    assert seen == {"host": "ci", "args": expected_args}
+
+
+def test_ssh_transport_errors_include_command_context(monkeypatch):
+    settings = _settings_with_hosts(ci={"address": "ci.example", "user": "noc-agent", "key": "/run/keys/noc"})
+
+    def fail_auth(*args, **kwargs):
+        raise RuntimeError("Authentication failed.")
+
+    monkeypatch.setattr(executor, "_run_paramiko", fail_auth)
+
+    result = run(executor.execute_args("ci", ["systemctl", "status", "hyrule-mcp.service", "--no-pager"], settings=settings, tool="os_systemd_status"))
+
+    assert result["ok"] is False
+    assert result["error_type"] == "transport_error"
+    assert result["sanitized_error"] == "Authentication failed."
+    assert result["data"]["command"] == "systemctl status hyrule-mcp.service --no-pager"
+    assert result["data"]["argv"] == ["systemctl", "status", "hyrule-mcp.service", "--no-pager"]
+    assert result["data"]["resolved_target"] == {
+        "name": "ci",
+        "address": "ci.example",
+        "username": "noc-agent",
+        "key_configured": True,
+    }
+    assert result["data"]["transport"] == "ssh"
+    assert result["data"]["timeout_s"] == settings.command_timeout_s
+    assert result["data"]["exception_type"] == "RuntimeError"
 
 
 def test_wrapper_tools_construct_allowlisted_commands(monkeypatch):

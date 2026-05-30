@@ -18,6 +18,7 @@ class HostProfile:
     os_family: str = "linux"
     init_system: str = "systemd"
     firewall: str | None = "nft"
+    aliases: tuple[str, ...] = ()
 
     @property
     def supports_systemd(self) -> bool:
@@ -25,7 +26,11 @@ class HostProfile:
 
     @property
     def supports_rcctl(self) -> bool:
-        return self.init_system == "rcctl" or self.os_family in {"openbsd", "freebsd"}
+        return self.init_system == "rcctl" or self.os_family == "openbsd"
+
+    @property
+    def supports_service(self) -> bool:
+        return self.init_system == "service" or self.os_family == "freebsd"
 
     @property
     def supports_pf(self) -> bool:
@@ -72,8 +77,9 @@ class MCPSettings:
                 user=str(entry.get("user", default_user)),
                 key=entry.get("key", default_key),
                 os_family=str(entry.get("os_family", entry.get("os", "linux"))).lower(),
-                init_system=str(entry.get("init_system", "rcctl" if entry.get("os_family") == "openbsd" else "systemd")).lower(),
-                firewall=entry.get("firewall", "pf" if entry.get("os_family") == "openbsd" else "nft"),
+                init_system=str(entry.get("init_system", _default_init_system(entry))).lower(),
+                firewall=entry.get("firewall", "pf" if str(entry.get("os_family", entry.get("os", ""))).lower() in {"openbsd", "freebsd"} else "nft"),
+                aliases=tuple(str(alias) for alias in (entry.get("aliases") or []) if str(alias)),
             )
             for name, entry in (hosts_cfg.get("hosts", {}) or {}).items()
             if isinstance(entry, dict)
@@ -111,6 +117,9 @@ class MCPSettings:
     def resolve(self, host: str) -> HostProfile:
         if host in self.hosts:
             return self.hosts[host]
+        for profile in self.hosts.values():
+            if host in profile.aliases:
+                return profile
         return HostProfile(
             name=host,
             address=host,
@@ -127,5 +136,13 @@ def _load_hosts_config(path: str) -> dict[str, Any]:
         return {}
 
 
-SETTINGS = MCPSettings.from_env()
+def _default_init_system(entry: dict[str, Any]) -> str:
+    os_family = str(entry.get("os_family", entry.get("os", "linux"))).lower()
+    if os_family == "openbsd":
+        return "rcctl"
+    if os_family == "freebsd":
+        return "service"
+    return "systemd"
 
+
+SETTINGS = MCPSettings.from_env()

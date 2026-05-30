@@ -53,6 +53,7 @@ def _settings_with_hosts(**hosts):
             os_family=entry.get("os_family", "linux"),
             init_system=entry.get("init_system", "systemd"),
             firewall=entry.get("firewall", "nft"),
+            aliases=tuple(entry.get("aliases", ())),
         )
         for name, entry in hosts.items()
     }
@@ -358,6 +359,153 @@ def test_os_aware_feedback_for_incompatible_service_tool(monkeypatch):
     assert result["ok"] is False
     assert result["error_type"] == "unsupported_os"
     assert "os_rcctl_check" in result["sanitized_error"]
+
+
+def test_resolve_uses_host_aliases():
+    settings = _settings_with_hosts(**{"cr1-nl1": {"address": "2001:db8::a", "aliases": ["cr1.nl1", "cr1_nl1"]}})
+
+    assert settings.resolve("cr1.nl1").name == "cr1-nl1"
+    assert settings.resolve("cr1_nl1").address == "2001:db8::a"
+
+
+def test_freebsd_service_status_uses_onestatus(monkeypatch):
+    settings = _settings_with_hosts(**{"cr1-nl1": {"os_family": "freebsd", "init_system": "service", "firewall": "pf"}})
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+    seen = {}
+
+    async def fake_execute(host, args, username=None, timeout_s=None, settings=SETTINGS, tool="command"):
+        seen["host"] = host
+        seen["args"] = args
+        return {"ok": True, "stdout": "node_exporter is running", "tool": tool}
+
+    monkeypatch.setattr(diagnostics, "execute_args", fake_execute)
+
+    result = run(mcp_server.os_service_status("cr1-nl1", "node_exporter"))
+
+    assert result["ok"] is True
+    assert seen == {"host": "cr1-nl1", "args": ["service", "node_exporter", "onestatus"]}
+
+
+def test_service_tools_return_structured_error_for_invalid_service_name():
+    result = run(mcp_server.os_service_status("cr1-nl1", "node_exporter;restart"))
+
+    assert result["ok"] is False
+    assert result["error_type"] == "policy_blocked"
+    assert result["summary"] == "Invalid service name"
+
+
+def test_freebsd_service_logs_falls_back_to_messages(monkeypatch):
+    settings = _settings_with_hosts(**{"cr1-nl1": {"os_family": "freebsd", "init_system": "service", "firewall": "pf"}})
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+    calls = []
+    outputs = iter(
+        [
+            {"ok": False, "stdout": "", "stderr": "No such file"},
+            {"ok": True, "stdout": "old\nnew node_exporter line\n", "stderr": ""},
+        ]
+    )
+
+    async def fake_execute(host, args, username=None, timeout_s=None, settings=SETTINGS, tool="command"):
+        calls.append(args)
+        return next(outputs)
+
+    monkeypatch.setattr(diagnostics, "execute_args", fake_execute)
+
+    result = run(mcp_server.os_service_logs("cr1-nl1", "node_exporter", lines=1))
+
+    assert calls[0] == ["tail", "-n", "1", "/var/log/node_exporter.log"]
+    assert calls[1] == ["grep", "-i", "node_exporter", "/var/log/messages"]
+    assert result["stdout"] == "new node_exporter line"
+    assert result["data"]["fallback_used"] is True
+
+
+def test_freebsd_path_explain_parses_route_get(monkeypatch):
+    settings = _settings_with_hosts(**{"cr1-nl1": {"os_family": "freebsd", "init_system": "service", "firewall": "pf"}})
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+    calls = []
+
+    async def fake_execute(host, args, username=None, timeout_s=None, settings=SETTINGS, tool="command"):
+        calls.append(args)
+        if args[0] == "route":
+            return {"ok": True, "stdout": "   route to: 2001:db8::1\ngateway: fe80::1\ninterface: vtnet0\nif address: fe80::2\n"}
+        return {"ok": True, "stdout": "fe80::1 at aa:bb:cc on vtnet0 permanent"}
+
+    monkeypatch.setattr(diagnostics, "execute_args", fake_execute)
+
+    result = run(mcp_server.path_explain("cr1-nl1", "2001:db8::1"))
+
+    assert calls[0] == ["route", "-n", "get", "2001:db8::1"]
+    assert result["data"]["next_hop"] == "fe80::1"
+    assert result["data"]["interface"] == "vtnet0"
+    assert result["data"]["route_fields"]["if_address"] == "fe80::2"
+
+
+def test_freebsd_path_explain_uses_arp_for_ipv4_next_hop(monkeypatch):
+    settings = _settings_with_hosts(**{"cr1-nl1": {"os_family": "freebsd", "init_system": "service", "firewall": "pf"}})
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+
+    async def fake_execute(host, args, username=None, timeout_s=None, settings=SETTINGS, tool="command"):
+        return {"ok": True, "stdout": "route to: 192.0.2.100\ngateway: 192.0.2.1\ninterface: vtnet0\n"}
+
+    arp_calls = []
+    ndp_calls = []
+
+    async def fake_arp_state(host, addr=None, iface=None):
+        arp_calls.append((host, addr, iface))
+        return {"data": {"entries": [{"addr": addr}]}}
+
+    async def fake_ndp_state(host, addr=None, iface=None):
+        ndp_calls.append((host, addr, iface))
+        return {"data": {"entries": []}}
+
+    monkeypatch.setattr(diagnostics, "execute_args", fake_execute)
+    monkeypatch.setattr(diagnostics, "arp_state", fake_arp_state)
+    monkeypatch.setattr(diagnostics, "ndp_state", fake_ndp_state)
+
+    result = run(mcp_server.path_explain("cr1-nl1", "192.0.2.100"))
+
+    assert result["data"]["next_hop"] == "192.0.2.1"
+    assert arp_calls == [("cr1-nl1", "192.0.2.1", None)]
+    assert ndp_calls == []
+
+
+def test_freebsd_socket_listeners_uses_sockstat(monkeypatch):
+    settings = _settings_with_hosts(**{"cr1-nl1": {"os_family": "freebsd", "init_system": "service", "firewall": "pf"}})
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+    seen = {}
+
+    async def fake_execute(host, args, username=None, timeout_s=None, settings=SETTINGS, tool="command"):
+        seen["args"] = args
+        return {"ok": True, "stdout": "USER COMMAND PID FD PROTO LOCAL ADDRESS FOREIGN ADDRESS\nroot node_exporter 42 3 tcp6 [::]:9100 *:*"}
+
+    monkeypatch.setattr(diagnostics, "execute_args", fake_execute)
+
+    result = run(mcp_server.socket_listeners("cr1-nl1"))
+
+    assert seen["args"] == ["sockstat", "-46", "-l"]
+    assert result["data"]["listeners"][0]["command"] == "node_exporter"
+
+
+def test_openbsd_socket_listeners_skips_netstat_headers(monkeypatch):
+    settings = _settings_with_hosts(mail={"os_family": "openbsd", "init_system": "rcctl", "firewall": "pf"})
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+
+    async def fake_execute(host, args, username=None, timeout_s=None, settings=SETTINGS, tool="command"):
+        return {
+            "ok": True,
+            "stdout": (
+                "Active Internet connections (including servers)\n"
+                "Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)\n"
+                "tcp6       0      0  *.22                   *.*                   LISTEN\n"
+            ),
+        }
+
+    monkeypatch.setattr(diagnostics, "execute_args", fake_execute)
+
+    result = run(mcp_server.socket_listeners("mail"))
+
+    assert len(result["data"]["listeners"]) == 1
+    assert result["data"]["listeners"][0]["protocol"] == "tcp6"
 
 
 def test_truncation_reports_hard_limits():

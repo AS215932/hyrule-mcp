@@ -58,6 +58,8 @@ def register_tools() -> None:
         "tcpdump_capture",
         "system_tcpdump",
         "wg_show",
+        "os_service_status",
+        "os_service_logs",
         "os_systemd_status",
         "os_rcctl_check",
         "os_journalctl",
@@ -75,11 +77,13 @@ def register_tools() -> None:
         "path_explain",
         "ecmp_path_select",
         "service_restart_history",
+        "socket_listeners",
         "vault_agent_status",
         "dns_probe_burst",
     ):
         mcp.tool()(getattr(diagnostics, name))
     action_tool()(diagnostics.os_systemd_restart)
+    action_tool()(diagnostics.os_service_restart)
     action_tool()(diagnostics.icinga_acknowledge_alert)
 
 
@@ -104,4 +108,3 @@ def main():
         uvicorn.run(build_http_app(), host=host, port=port, log_level="info")
     else:
         mcp.run()
-

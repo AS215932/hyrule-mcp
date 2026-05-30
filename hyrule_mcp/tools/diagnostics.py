@@ -56,7 +56,10 @@ READ_ONLY_COMMANDS = {
     "ps",
     "pwd",
     "rcctl",
+    "route",
+    "service",
     "ss",
+    "sockstat",
     "stat",
     "systemctl",
     "tail",
@@ -267,6 +270,69 @@ async def os_systemd_restart(host: str, unit: str) -> dict[str, Any]:
     if not profile.supports_systemd:
         return await unsupported_os("os_systemd_restart", host, "systemd restart is not supported on this host.")
     return await execute_args(host, command_args("systemctl", "restart", unit), tool="os_systemd_restart")
+
+
+async def os_service_status(host: str, service: str) -> dict[str, Any]:
+    profile = SETTINGS.resolve(host)
+    service = _safe_service_name(service)
+    if profile.supports_service:
+        return await execute_args(host, command_args("service", service, "onestatus"), tool="os_service_status")
+    if profile.supports_rcctl:
+        return await execute_args(host, command_args("rcctl", "check", service), tool="os_service_status")
+    if profile.supports_systemd:
+        return await execute_args(host, command_args("systemctl", "status", service, "--no-pager"), tool="os_service_status")
+    return await unsupported_os("os_service_status", host, "No supported service status command is known for this host.")
+
+
+async def os_service_logs(host: str, service: str, lines: int = 100) -> dict[str, Any]:
+    profile = SETTINGS.resolve(host)
+    service = _safe_service_name(service)
+    lines = max(1, min(int(lines), 500))
+    if profile.supports_systemd:
+        return await execute_args(host, command_args("journalctl", "-u", service, "-n", lines, "--no-pager"), tool="os_service_logs")
+    if not profile.supports_service and not profile.supports_rcctl:
+        return await unsupported_os("os_service_logs", host, "No supported service log source is known for this host.")
+
+    log_path = f"/var/log/{service}.log"
+    dedicated = await execute_args(host, command_args("tail", "-n", lines, log_path), tool="os_service_logs")
+    if dedicated.get("ok"):
+        dedicated["summary"] = "Service log collected from dedicated log file"
+        dedicated["data"] = {**(dedicated.get("data") or {}), "source": log_path, "fallback_used": False}
+        return dedicated
+
+    fallback = await execute_args(host, command_args("grep", "-i", service, "/var/log/messages"), tool="os_service_logs")
+    if fallback.get("stdout"):
+        selected = "\n".join(str(fallback["stdout"]).splitlines()[-lines:])
+        fallback["stdout"] = selected
+        fallback["returned_lines"] = len(selected.splitlines())
+    fallback["summary"] = "Service log collected from /var/log/messages" if fallback.get("ok") else "Service logs unavailable"
+    fallback["data"] = {
+        **(fallback.get("data") or {}),
+        "source": "/var/log/messages",
+        "fallback_used": True,
+        "dedicated_log": dedicated,
+    }
+    return fallback
+
+
+async def os_service_restart(host: str, service: str) -> dict[str, Any]:
+    if not SETTINGS.enable_actions:
+        return error_result(
+            tool="os_service_restart",
+            target=host,
+            summary="Action tool disabled",
+            error_type="policy_blocked",
+            sanitized_error="HYRULE_MCP_ENABLE_ACTIONS is not enabled.",
+        )
+    profile = SETTINGS.resolve(host)
+    service = _safe_service_name(service)
+    if profile.supports_service:
+        return await execute_args(host, command_args("service", service, "restart"), tool="os_service_restart")
+    if profile.supports_rcctl:
+        return await execute_args(host, command_args("rcctl", "restart", service), tool="os_service_restart")
+    if profile.supports_systemd:
+        return await execute_args(host, command_args("systemctl", "restart", service), tool="os_service_restart")
+    return await unsupported_os("os_service_restart", host, "No supported service restart command is known for this host.")
 
 
 async def os_rcctl_check(host: str, service: str) -> dict[str, Any]:
@@ -513,9 +579,19 @@ async def multi_source_probe(
 
 
 async def path_explain(from_host: str, to_addr: str, protocol: str = "icmp", src_port: int | None = None) -> dict[str, Any]:
-    route_result = await execute_args(from_host, command_args("ip", "-6", "route", "get", to_addr), tool="path_explain")
-    next_hop = _extract_next_hop(route_result.get("stdout") or "")
-    neighbors = await ndp_state(from_host, addr=next_hop) if next_hop else {"data": {"entries": []}}
+    profile = SETTINGS.resolve(from_host)
+    if profile.os_family == "freebsd":
+        route_result = await execute_args(from_host, command_args("route", "-n", "get", to_addr), tool="path_explain")
+        route_fields = _parse_freebsd_route_get(route_result.get("stdout") or "")
+        next_hop = route_fields.get("gateway")
+    else:
+        route_result = await execute_args(from_host, command_args("ip", "-6", "route", "get", to_addr), tool="path_explain")
+        route_fields = {}
+        next_hop = _extract_next_hop(route_result.get("stdout") or "")
+    if next_hop and "." in next_hop:
+        neighbors = await arp_state(from_host, addr=next_hop)
+    else:
+        neighbors = await ndp_state(from_host, addr=next_hop) if next_hop else {"data": {"entries": []}}
     return _result(
         ProbeResult(
             tool="path_explain",
@@ -527,7 +603,9 @@ async def path_explain(from_host: str, to_addr: str, protocol: str = "icmp", src
                 "protocol": protocol,
                 "src_port": src_port,
                 "route": route_result.get("stdout"),
+                "route_fields": route_fields,
                 "next_hop": next_hop,
+                "interface": route_fields.get("interface"),
                 "neighbor_state": (neighbors.get("data") or {}).get("entries", []),
             },
         )
@@ -557,6 +635,18 @@ async def service_restart_history(host: str, unit: str, since: str = "1 hour ago
         action = "started" if "Started" in line else "stopped" if "Stopped" in line else "crashed"
         events.append({"ts": line[:24].strip(), "action": action, "summary": line})
     return _result(ToolResult(tool="service_restart_history", target=host, summary="Service restart history collected", data={"events": events, "cadence_seconds": _cadence_seconds(events), "command": result}))
+
+
+async def socket_listeners(host: str) -> dict[str, Any]:
+    profile = SETTINGS.resolve(host)
+    if profile.os_family == "freebsd":
+        result = await execute_args(host, command_args("sockstat", "-46", "-l"), tool="socket_listeners")
+    elif profile.os_family == "openbsd":
+        result = await execute_args(host, command_args("netstat", "-an", "-f", "inet", "-f", "inet6"), tool="socket_listeners")
+    else:
+        result = await execute_args(host, command_args("ss", "-lntup"), tool="socket_listeners")
+    result["data"] = {**(result.get("data") or {}), "listeners": _parse_socket_listeners(result.get("stdout") or "", profile.os_family)}
+    return result
 
 
 async def vault_agent_status(host: str) -> dict[str, Any]:
@@ -591,6 +681,13 @@ def _read_only_policy_error(args: list[str]) -> str | None:
     if _looks_mutative(args):
         return "Raw command contains a mutative verb and is blocked by the read-only diagnostic allowlist policy."
     return None
+
+
+def _safe_service_name(service: str) -> str:
+    service = service.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.@+-]+", service):
+        raise ValueError("Service name contains unsupported characters.")
+    return service
 
 
 def _line_summaries(value: str) -> list[str]:
@@ -650,6 +747,38 @@ def _extract_next_hop(value: str) -> str | None:
         return str(ipaddress.ip_address(candidate))
     except ValueError:
         return candidate
+
+
+def _parse_freebsd_route_get(value: str) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for line in value.splitlines():
+        if ":" not in line:
+            continue
+        key, raw = line.split(":", 1)
+        fields[key.strip().lower().replace(" ", "_")] = raw.strip()
+    return fields
+
+
+def _parse_socket_listeners(value: str, os_family: str) -> list[dict[str, Any]]:
+    listeners = []
+    for line in value.splitlines():
+        if not line.strip() or line.lower().startswith("user"):
+            continue
+        parts = line.split()
+        if os_family == "freebsd" and len(parts) >= 6:
+            listeners.append(
+                {
+                    "user": parts[0],
+                    "command": parts[1],
+                    "pid": parts[2],
+                    "protocol": parts[4],
+                    "local": parts[5],
+                    "summary": line,
+                }
+            )
+        else:
+            listeners.append({"summary": line})
+    return listeners
 
 
 def _cadence_seconds(events: list[dict[str, Any]]) -> int | None:

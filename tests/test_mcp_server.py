@@ -386,6 +386,14 @@ def test_freebsd_service_status_uses_onestatus(monkeypatch):
     assert seen == {"host": "cr1-nl1", "args": ["service", "node_exporter", "onestatus"]}
 
 
+def test_service_tools_return_structured_error_for_invalid_service_name():
+    result = run(mcp_server.os_service_status("cr1-nl1", "node_exporter;restart"))
+
+    assert result["ok"] is False
+    assert result["error_type"] == "policy_blocked"
+    assert result["summary"] == "Invalid service name"
+
+
 def test_freebsd_service_logs_falls_back_to_messages(monkeypatch):
     settings = _settings_with_hosts(**{"cr1-nl1": {"os_family": "freebsd", "init_system": "service", "firewall": "pf"}})
     monkeypatch.setattr(diagnostics, "SETTINGS", settings)
@@ -432,6 +440,35 @@ def test_freebsd_path_explain_parses_route_get(monkeypatch):
     assert result["data"]["route_fields"]["if_address"] == "fe80::2"
 
 
+def test_freebsd_path_explain_uses_arp_for_ipv4_next_hop(monkeypatch):
+    settings = _settings_with_hosts(**{"cr1-nl1": {"os_family": "freebsd", "init_system": "service", "firewall": "pf"}})
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+
+    async def fake_execute(host, args, username=None, timeout_s=None, settings=SETTINGS, tool="command"):
+        return {"ok": True, "stdout": "route to: 192.0.2.100\ngateway: 192.0.2.1\ninterface: vtnet0\n"}
+
+    arp_calls = []
+    ndp_calls = []
+
+    async def fake_arp_state(host, addr=None, iface=None):
+        arp_calls.append((host, addr, iface))
+        return {"data": {"entries": [{"addr": addr}]}}
+
+    async def fake_ndp_state(host, addr=None, iface=None):
+        ndp_calls.append((host, addr, iface))
+        return {"data": {"entries": []}}
+
+    monkeypatch.setattr(diagnostics, "execute_args", fake_execute)
+    monkeypatch.setattr(diagnostics, "arp_state", fake_arp_state)
+    monkeypatch.setattr(diagnostics, "ndp_state", fake_ndp_state)
+
+    result = run(mcp_server.path_explain("cr1-nl1", "192.0.2.100"))
+
+    assert result["data"]["next_hop"] == "192.0.2.1"
+    assert arp_calls == [("cr1-nl1", "192.0.2.1", None)]
+    assert ndp_calls == []
+
+
 def test_freebsd_socket_listeners_uses_sockstat(monkeypatch):
     settings = _settings_with_hosts(**{"cr1-nl1": {"os_family": "freebsd", "init_system": "service", "firewall": "pf"}})
     monkeypatch.setattr(diagnostics, "SETTINGS", settings)
@@ -447,6 +484,28 @@ def test_freebsd_socket_listeners_uses_sockstat(monkeypatch):
 
     assert seen["args"] == ["sockstat", "-46", "-l"]
     assert result["data"]["listeners"][0]["command"] == "node_exporter"
+
+
+def test_openbsd_socket_listeners_skips_netstat_headers(monkeypatch):
+    settings = _settings_with_hosts(mail={"os_family": "openbsd", "init_system": "rcctl", "firewall": "pf"})
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+
+    async def fake_execute(host, args, username=None, timeout_s=None, settings=SETTINGS, tool="command"):
+        return {
+            "ok": True,
+            "stdout": (
+                "Active Internet connections (including servers)\n"
+                "Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)\n"
+                "tcp6       0      0  *.22                   *.*                   LISTEN\n"
+            ),
+        }
+
+    monkeypatch.setattr(diagnostics, "execute_args", fake_execute)
+
+    result = run(mcp_server.socket_listeners("mail"))
+
+    assert len(result["data"]["listeners"]) == 1
+    assert result["data"]["listeners"][0]["protocol"] == "tcp6"
 
 
 def test_truncation_reports_hard_limits():

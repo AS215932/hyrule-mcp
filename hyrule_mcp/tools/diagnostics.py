@@ -274,7 +274,10 @@ async def os_systemd_restart(host: str, unit: str) -> dict[str, Any]:
 
 async def os_service_status(host: str, service: str) -> dict[str, Any]:
     profile = SETTINGS.resolve(host)
-    service = _safe_service_name(service)
+    try:
+        service = _safe_service_name(service)
+    except ValueError as exc:
+        return error_result(tool="os_service_status", target=host, summary="Invalid service name", error_type="policy_blocked", sanitized_error=sanitize_text(exc))
     if profile.supports_service:
         return await execute_args(host, command_args("service", service, "onestatus"), tool="os_service_status")
     if profile.supports_rcctl:
@@ -286,7 +289,10 @@ async def os_service_status(host: str, service: str) -> dict[str, Any]:
 
 async def os_service_logs(host: str, service: str, lines: int = 100) -> dict[str, Any]:
     profile = SETTINGS.resolve(host)
-    service = _safe_service_name(service)
+    try:
+        service = _safe_service_name(service)
+    except ValueError as exc:
+        return error_result(tool="os_service_logs", target=host, summary="Invalid service name", error_type="policy_blocked", sanitized_error=sanitize_text(exc))
     lines = max(1, min(int(lines), 500))
     if profile.supports_systemd:
         return await execute_args(host, command_args("journalctl", "-u", service, "-n", lines, "--no-pager"), tool="os_service_logs")
@@ -325,7 +331,10 @@ async def os_service_restart(host: str, service: str) -> dict[str, Any]:
             sanitized_error="HYRULE_MCP_ENABLE_ACTIONS is not enabled.",
         )
     profile = SETTINGS.resolve(host)
-    service = _safe_service_name(service)
+    try:
+        service = _safe_service_name(service)
+    except ValueError as exc:
+        return error_result(tool="os_service_restart", target=host, summary="Invalid service name", error_type="policy_blocked", sanitized_error=sanitize_text(exc))
     if profile.supports_service:
         return await execute_args(host, command_args("service", service, "restart"), tool="os_service_restart")
     if profile.supports_rcctl:
@@ -762,9 +771,25 @@ def _parse_freebsd_route_get(value: str) -> dict[str, Any]:
 def _parse_socket_listeners(value: str, os_family: str) -> list[dict[str, Any]]:
     listeners = []
     for line in value.splitlines():
-        if not line.strip() or line.lower().startswith("user"):
+        line = line.strip()
+        if not line or line.lower().startswith("user"):
             continue
         parts = line.split()
+        if os_family == "openbsd":
+            if line.startswith(("Active", "Proto", "Address")):
+                continue
+            if not parts or parts[0] not in {"tcp", "udp", "tcp4", "udp4", "tcp6", "udp6"}:
+                continue
+            listeners.append(
+                {
+                    "protocol": parts[0],
+                    "local": parts[3] if len(parts) > 3 else None,
+                    "foreign": parts[4] if len(parts) > 4 else None,
+                    "state": parts[5] if len(parts) > 5 else None,
+                    "summary": line,
+                }
+            )
+            continue
         if os_family == "freebsd" and len(parts) >= 6:
             listeners.append(
                 {

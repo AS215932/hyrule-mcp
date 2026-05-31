@@ -1,0 +1,41 @@
+# PR-Agent (advisory) configuration for AS215932/hyrule-mcp.
+# Replaces hosted Sourcery. Runs only on the unprivileged hyrule-public-pr
+# runner with read/comment-only perms, on our OpenRouter key.
+
+[config]
+git_provider = "github"
+# deepseek-v4-flash / minimax-m2.7 are custom models -> need custom_model_max_tokens.
+model = "openrouter/deepseek/deepseek-v4-flash"
+fallback_models = ["openrouter/minimax/minimax-m2.7"]
+custom_model_max_tokens = 128000
+temperature = 0.2
+use_repo_settings_file = true
+publish_output = true
+
+[github_action_config]
+auto_review = true
+auto_describe = false
+auto_improve = true
+
+[pr_reviewer]
+require_security_review = true
+require_tests_review = true
+require_score_review = true
+require_estimate_effort_to_review = true
+extra_instructions = """
+This is hyrule-mcp: the MCP server exposing AS215932 infra tools (SSH,
+Prometheus, Icinga2, FRR, DNS), Python 3.14. Every tool is a potential
+command-execution boundary — treat as HIGH RISK. Flag, with specifics:
+- shell interpolation of user / model input (any subprocess with shell=True or
+  f-string-built commands);
+- subprocess / SSH execution without an OS-aware command allowlist;
+- missing or weak per-tool input-schema validation;
+- tools that default to write/mutate instead of read-only;
+- missing command timeouts or output truncation (unbounded responses);
+- unsanitized structured responses leaking host internals; secrets in files.
+Write/action tools must stay shadow-mode-gated (HYRULE_MCP_ENABLE_ACTIONS).
+Do not restate the diff.
+"""
+
+[pr_description]
+publish_description_as_comment = true

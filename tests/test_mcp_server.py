@@ -1,4 +1,5 @@
 import asyncio
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -523,3 +524,17 @@ def test_http_app_exposes_streamable_mcp_at_documented_path():
 
     assert "/health" in mounted_paths
     assert "/mcp" in mounted_paths
+
+
+def test_http_health_is_independent_of_mcp_session():
+    app = mcp_server.build_http_app()
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/health")
+
+    response = run(route.endpoint(None))
+
+    assert response.status_code == 200
+    assert json.loads(response.body) == {
+        "status": "ok",
+        "service": "hyrule-mcp",
+        "transport": "streamable-http",
+    }

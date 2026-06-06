@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from hyrule_mcp.action_auth import validate_action_authorization
 from hyrule_mcp.executor import command_args, execute_args, unsupported_os
 from hyrule_mcp.models import (
     DnsProbeResult,
@@ -257,16 +258,23 @@ async def os_systemd_status(host: str, unit: str) -> dict[str, Any]:
     return await execute_args(host, command_args("systemctl", "status", unit, "--no-pager"), tool="os_systemd_status")
 
 
-async def os_systemd_restart(host: str, unit: str) -> dict[str, Any]:
-    if not SETTINGS.enable_actions:
-        return error_result(
-            tool="os_systemd_restart",
-            target=host,
-            summary="Action tool disabled",
-            error_type="policy_blocked",
-            sanitized_error="HYRULE_MCP_ENABLE_ACTIONS is not enabled.",
-        )
+async def os_systemd_restart(host: str, unit: str, action_authorization: dict[str, Any] | None = None) -> dict[str, Any]:
+    blocked = validate_action_authorization(
+        tool="os_systemd_restart",
+        action_class="restart_service",
+        target=host,
+        action_authorization=action_authorization,
+        settings=SETTINGS,
+        host=host,
+        service=unit,
+    )
+    if blocked:
+        return blocked
     profile = SETTINGS.resolve(host)
+    try:
+        unit = _safe_service_name(unit)
+    except ValueError as exc:
+        return error_result(tool="os_systemd_restart", target=host, summary="Invalid service name", error_type="policy_blocked", sanitized_error=sanitize_text(exc))
     if not profile.supports_systemd:
         return await unsupported_os("os_systemd_restart", host, "systemd restart is not supported on this host.")
     return await execute_args(host, command_args("systemctl", "restart", unit), tool="os_systemd_restart")
@@ -321,15 +329,18 @@ async def os_service_logs(host: str, service: str, lines: int = 100) -> dict[str
     return fallback
 
 
-async def os_service_restart(host: str, service: str) -> dict[str, Any]:
-    if not SETTINGS.enable_actions:
-        return error_result(
-            tool="os_service_restart",
-            target=host,
-            summary="Action tool disabled",
-            error_type="policy_blocked",
-            sanitized_error="HYRULE_MCP_ENABLE_ACTIONS is not enabled.",
-        )
+async def os_service_restart(host: str, service: str, action_authorization: dict[str, Any] | None = None) -> dict[str, Any]:
+    blocked = validate_action_authorization(
+        tool="os_service_restart",
+        action_class="restart_service",
+        target=host,
+        action_authorization=action_authorization,
+        settings=SETTINGS,
+        host=host,
+        service=service,
+    )
+    if blocked:
+        return blocked
     profile = SETTINGS.resolve(host)
     try:
         service = _safe_service_name(service)
@@ -465,10 +476,25 @@ async def icinga_list_problems(object_type: str = "service", limit: int = 20) ->
         return error_result(tool=tool, summary="Icinga problem listing failed", error_type="transport_error", sanitized_error=sanitize_text(exc))
 
 
-async def icinga_acknowledge_alert(host_name: str, service_name: str, author: str, comment: str) -> dict[str, Any]:
+async def icinga_acknowledge_alert(
+    host_name: str,
+    service_name: str | None,
+    author: str,
+    comment: str,
+    action_authorization: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     tool = "icinga_acknowledge_alert"
-    if not SETTINGS.enable_actions:
-        return error_result(tool=tool, target=host_name, summary="Action tool disabled", error_type="policy_blocked", sanitized_error="HYRULE_MCP_ENABLE_ACTIONS is not enabled.")
+    blocked = validate_action_authorization(
+        tool=tool,
+        action_class="acknowledge_icinga",
+        target=host_name,
+        action_authorization=action_authorization,
+        settings=SETTINGS,
+        host=host_name,
+        service=service_name or "",
+    )
+    if blocked:
+        return blocked
     type_param = "Service" if service_name else "Host"
     filter_str = f'host.name=="{host_name}"'
     if service_name:

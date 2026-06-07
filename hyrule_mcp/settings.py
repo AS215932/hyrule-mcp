@@ -49,6 +49,9 @@ class MCPSettings:
     icinga_api_password: str = ""
     icinga_verify_tls: bool = False
     enable_actions: bool = False
+    action_signing_secret: str = ""
+    action_allowed_hosts: set[str] = field(default_factory=set)
+    action_allowed_services: set[str] = field(default_factory=set)
     command_timeout_s: int = 30
     raw_output_line_limit: int = 100
     raw_output_byte_limit: int = 16_384
@@ -97,6 +100,9 @@ class MCPSettings:
             icinga_api_password=os.getenv("ICINGA_API_PASSWORD", ""),
             icinga_verify_tls=os.getenv("ICINGA_VERIFY_TLS", "0") == "1",
             enable_actions=os.getenv("HYRULE_MCP_ENABLE_ACTIONS", "0") == "1",
+            action_signing_secret=os.getenv("HYRULE_MCP_ACTION_SIGNING_SECRET", os.getenv("NOC_APPROVAL_SIGNING_SECRET", "")),
+            action_allowed_hosts=_csv_set(os.getenv("HYRULE_MCP_ACTION_ALLOWED_HOSTS", "")),
+            action_allowed_services=_csv_set(os.getenv("HYRULE_MCP_ACTION_ALLOWED_SERVICES", "")),
             command_timeout_s=int(os.getenv("HYRULE_MCP_COMMAND_TIMEOUT_S", str(cls.command_timeout_s))),
             raw_output_line_limit=int(os.getenv("HYRULE_MCP_RAW_OUTPUT_LINE_LIMIT", str(cls.raw_output_line_limit))),
             raw_output_byte_limit=int(os.getenv("HYRULE_MCP_RAW_OUTPUT_BYTE_LIMIT", str(cls.raw_output_byte_limit))),
@@ -143,6 +149,10 @@ def _default_init_system(entry: dict[str, Any]) -> str:
     if os_family == "freebsd":
         return "service"
     return "systemd"
+
+
+def _csv_set(value: str) -> set[str]:
+    return {item.strip() for item in value.split(",") if item.strip()}
 
 
 SETTINGS = MCPSettings.from_env()

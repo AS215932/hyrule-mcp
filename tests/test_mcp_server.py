@@ -1,5 +1,8 @@
 import asyncio
+import hashlib
+import hmac
 import json
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -59,6 +62,19 @@ def _settings_with_hosts(**hosts):
         for name, entry in hosts.items()
     }
     return replace(SETTINGS, hosts=profiles)
+
+
+def _auth(secret="sign-me", action_class="restart_service", expiry=None, action_id="act-1"):
+    payload = {
+        "action_id": action_id,
+        "case_id": "case-1",
+        "operator": "pytest",
+        "action_class": action_class,
+        "expiry": expiry or int(time.time()) + 60,
+    }
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    payload["signature"] = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return payload
 
 
 def test_resolve_uses_host_map(monkeypatch):
@@ -280,6 +296,82 @@ def test_icinga_acknowledge_alert_is_disabled_by_default(monkeypatch):
 
     assert result["ok"] is False
     assert result["error_type"] == "policy_blocked"
+
+
+def test_action_tool_rejects_missing_authorization_when_enabled(monkeypatch):
+    monkeypatch.setattr(diagnostics, "SETTINGS", replace(SETTINGS, enable_actions=True, action_signing_secret="sign-me"))
+
+    result = run(mcp_server.os_service_restart("noc", "node_exporter"))
+
+    assert result["ok"] is False
+    assert result["error_type"] == "policy_blocked"
+    assert result["data"]["reason"] == "missing_authorization"
+
+
+def test_action_tool_rejects_expired_authorization(monkeypatch):
+    monkeypatch.setattr(diagnostics, "SETTINGS", replace(SETTINGS, enable_actions=True, action_signing_secret="sign-me"))
+
+    result = run(mcp_server.os_service_restart("noc", "node_exporter", action_authorization=_auth(expiry=int(time.time()) - 1)))
+
+    assert result["ok"] is False
+    assert result["data"]["reason"] == "expired"
+
+
+def test_action_tool_rejects_disallowed_host_and_service(monkeypatch):
+    settings = replace(
+        SETTINGS,
+        enable_actions=True,
+        action_signing_secret="sign-me",
+        action_allowed_hosts={"noc"},
+        action_allowed_services={"node_exporter"},
+    )
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+
+    host_result = run(mcp_server.os_service_restart("mail", "node_exporter", action_authorization=_auth()))
+    service_result = run(mcp_server.os_service_restart("noc", "postgres", action_authorization=_auth()))
+
+    assert host_result["data"]["reason"] == "host_not_allowed"
+    assert service_result["data"]["reason"] == "service_not_allowed"
+
+
+def test_approved_service_restart_executes_bounded_helper(monkeypatch):
+    calls = []
+    settings = _settings_with_hosts(noc={"init_system": "systemd"})
+    settings = replace(settings, enable_actions=True, action_signing_secret="sign-me")
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+
+    async def fake_execute(host, args, username=None, timeout_s=None, settings=SETTINGS, tool="command"):
+        calls.append((tool, host, args))
+        return {"ok": True, "tool": tool, "target": host}
+
+    monkeypatch.setattr(diagnostics, "execute_args", fake_execute)
+
+    result = run(mcp_server.os_service_restart("noc", "node_exporter", action_authorization=_auth()))
+
+    assert result["ok"] is True
+    assert calls == [("os_service_restart", "noc", ["systemctl", "restart", "node_exporter"])]
+
+
+def test_approved_icinga_acknowledge_posts_action(monkeypatch):
+    settings = replace(SETTINGS, enable_actions=True, action_signing_secret="sign-me")
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+    FakeAsyncClient.responses = [_response({"results": [{"code": 200.0, "status": "Acknowledged"}]})]
+    FakeAsyncClient.seen = []
+    monkeypatch.setattr(diagnostics.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = run(
+        mcp_server.icinga_acknowledge_alert(
+            "noc",
+            "disk",
+            "pytest",
+            "ack",
+            action_authorization=_auth(action_class="acknowledge_icinga"),
+        )
+    )
+
+    assert result["ok"] is True
+    assert FakeAsyncClient.seen[0][0] == "post"
+    assert FakeAsyncClient.seen[0][2]["params"]["type"] == "Service"
 
 
 def test_tcpdump_capture_enforces_resource_caps(monkeypatch):

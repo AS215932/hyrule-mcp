@@ -17,6 +17,8 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-mock>=3.14",
+    "ruff>=0.8",
+    "mypy>=1.13",
 ]
 
 [project.scripts]
@@ -31,3 +33,20 @@ only-include = ["mcp_server.py", "hyrule_mcp"]
 
 [tool.hatch.build.targets.wheel.sources]
 "mcp_server.py" = "mcp_server.py"
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"mcp_server.py" = ["F401", "F403", "RUF100"]
+"hyrule_mcp/tools/__init__.py" = ["F401", "F403", "RUF100"]
+"tests/*.py" = ["F401", "RUF012"]
+
+[tool.mypy]
+python_version = "3.14"
+ignore_missing_imports = true

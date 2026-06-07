@@ -25,7 +25,7 @@ from hyrule_mcp.models import (
     ToolResult,
 )
 from hyrule_mcp.sanitize import dump_result, error_result, sanitize_text
-from hyrule_mcp.settings import MCPSettings, SETTINGS
+from hyrule_mcp.settings import SETTINGS
 
 
 READ_ONLY_COMMANDS = {

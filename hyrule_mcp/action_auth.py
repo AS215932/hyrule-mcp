@@ -41,9 +41,12 @@ def validate_action_authorization(
     if str(action_authorization.get("action_class")) != action_class:
         return _blocked(tool, target, "Action authorization class does not match this tool.", "action_class_mismatch")
 
+    expiry_value = action_authorization.get("expiry")
+    if not isinstance(expiry_value, str | int | float):
+        return _blocked(tool, target, "Action authorization expiry is invalid.", "invalid_expiry")
     try:
-        expiry = int(action_authorization.get("expiry"))
-    except (TypeError, ValueError):
+        expiry = int(expiry_value)
+    except ValueError:
         return _blocked(tool, target, "Action authorization expiry is invalid.", "invalid_expiry")
     if expiry < int(time.time()):
         return _blocked(tool, target, "Action authorization is expired.", "expired")

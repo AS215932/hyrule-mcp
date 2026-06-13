@@ -23,6 +23,7 @@ dev = [
 
 [project.scripts]
 hyrule-mcp = "mcp_server:main"
+hyrule-mcp-bgp-snapshot = "hyrule_mcp.router_snapshots:main"
 
 [build-system]
 requires = ["hatchling"]

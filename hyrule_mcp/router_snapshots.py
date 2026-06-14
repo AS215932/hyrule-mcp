@@ -27,7 +27,8 @@ def _command(router: str) -> list[str]:
 
 
 def _snapshot_id(router: str) -> str:
-    return f"bgps_{router}_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}_{secrets.token_hex(4)}"
+    # Keep IDs <= 36 chars for the Hyrule Cloud bgp_snapshots.snapshot_id column.
+    return f"bgps_{router}_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}_{secrets.token_hex(3)}"
 
 
 def _write_gzip(path: Path, payload: bytes) -> str:

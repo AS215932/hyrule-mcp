@@ -58,6 +58,126 @@ async def execute_args(
     )
 
 
+async def execute_raw_args(
+    host: str,
+    args: list[str],
+    *,
+    username: str | None = None,
+    timeout_s: int | None = None,
+    settings: MCPSettings = SETTINGS,
+    tool: str = "command",
+) -> dict[str, Any]:
+    """Run a trusted internal command and return untruncated stdout/stderr.
+
+    This is intentionally not used by public MCP tools. It exists for internal
+    collectors, such as router table snapshots, where the command output is the
+    artifact being collected and can legitimately exceed normal MCP response
+    safety limits.
+    """
+    profile = settings.resolve(host)
+    timeout = timeout_s or settings.command_timeout_s
+    if _is_local_target(profile, settings):
+        return await _run_local_raw(profile, args, timeout_s=timeout, settings=settings, tool=tool)
+
+    async with _SSH_SEMAPHORE:
+        started = time.perf_counter()
+        command = command_string(args)
+        context = _execution_context(profile, args, command=command, username=username, timeout_s=timeout, transport="ssh")
+        try:
+            raw = await asyncio.wait_for(
+                asyncio.to_thread(_run_paramiko, profile, command, username, timeout),
+                timeout=timeout + 12,
+            )
+            exit_code = raw.get("exit_code")
+            return {
+                "ok": exit_code == 0,
+                "tool": tool,
+                "target": profile.name,
+                "summary": "Command completed" if exit_code == 0 else "Command exited non-zero",
+                "stdout": raw.get("stdout", ""),
+                "stderr": raw.get("stderr", ""),
+                "exit_code": exit_code,
+                "duration_ms": int((time.perf_counter() - started) * 1000),
+                "transport": "ssh",
+                "data": context,
+            }
+        except TimeoutError:
+            return error_result(
+                tool=tool,
+                target=profile.name,
+                summary="SSH command timed out",
+                error_type="timeout",
+                sanitized_error=f"SSH command timed out after {timeout}s.",
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                data=context,
+            )
+        except Exception as exc:
+            return error_result(
+                tool=tool,
+                target=profile.name,
+                summary="SSH command failed",
+                error_type="transport_error",
+                sanitized_error=sanitize_text(exc),
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                data={**context, "exception_type": type(exc).__name__},
+            )
+
+
+async def _run_local_raw(
+    profile: HostProfile,
+    args: list[str],
+    *,
+    timeout_s: int,
+    settings: MCPSettings,
+    tool: str,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    command = command_string(args)
+    context = _execution_context(profile, args, command=command, username=None, timeout_s=timeout_s, transport="local")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+        return {
+            "ok": proc.returncode == 0,
+            "tool": tool,
+            "target": profile.name,
+            "summary": "Command completed" if proc.returncode == 0 else "Command exited non-zero",
+            "stdout": stdout.decode("utf-8", errors="replace"),
+            "stderr": stderr.decode("utf-8", errors="replace"),
+            "exit_code": proc.returncode,
+            "duration_ms": int((time.perf_counter() - started) * 1000),
+            "transport": "local",
+            "data": context,
+        }
+    except TimeoutError:
+        if "proc" in locals():
+            proc.kill()
+            await proc.wait()
+        return error_result(
+            tool=tool,
+            target=profile.name,
+            summary="Command timed out",
+            error_type="timeout",
+            sanitized_error=f"Command timed out after {timeout_s}s.",
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            data=context,
+        )
+    except Exception as exc:
+        return error_result(
+            tool=tool,
+            target=profile.name,
+            summary="Local command failed",
+            error_type="transport_error",
+            sanitized_error=sanitize_text(exc),
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            data={**context, "exception_type": type(exc).__name__},
+        )
+
+
 async def unsupported_os(tool: str, host: str, message: str, *, suggestion: str | None = None) -> dict[str, Any]:
     detail = message if suggestion is None else f"{message} {suggestion}"
     return error_result(

@@ -31,12 +31,31 @@ async def execute_args(
     timeout_s: int | None = None,
     settings: MCPSettings = SETTINGS,
     tool: str = "command",
+    raw_output_byte_limit: int | None = None,
+    raw_output_line_limit: int | None = None,
 ) -> dict[str, Any]:
     profile = settings.resolve(host)
     timeout = timeout_s or settings.command_timeout_s
     if _is_local_target(profile, settings):
-        return await _run_local(profile, args, timeout_s=timeout, settings=settings, tool=tool)
-    return await _run_ssh(profile, args, username=username, timeout_s=timeout, settings=settings, tool=tool)
+        return await _run_local(
+            profile,
+            args,
+            timeout_s=timeout,
+            settings=settings,
+            tool=tool,
+            raw_output_byte_limit=raw_output_byte_limit,
+            raw_output_line_limit=raw_output_line_limit,
+        )
+    return await _run_ssh(
+        profile,
+        args,
+        username=username,
+        timeout_s=timeout,
+        settings=settings,
+        tool=tool,
+        raw_output_byte_limit=raw_output_byte_limit,
+        raw_output_line_limit=raw_output_line_limit,
+    )
 
 
 async def unsupported_os(tool: str, host: str, message: str, *, suggestion: str | None = None) -> dict[str, Any]:
@@ -57,6 +76,8 @@ async def _run_local(
     timeout_s: int,
     settings: MCPSettings,
     tool: str,
+    raw_output_byte_limit: int | None = None,
+    raw_output_line_limit: int | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     command = command_string(args)
@@ -78,6 +99,8 @@ async def _run_local(
             transport="local",
             settings=settings,
             data=context,
+            raw_output_byte_limit=raw_output_byte_limit,
+            raw_output_line_limit=raw_output_line_limit,
         )
     except TimeoutError:
         if "proc" in locals():
@@ -112,6 +135,8 @@ async def _run_ssh(
     timeout_s: int,
     settings: MCPSettings,
     tool: str,
+    raw_output_byte_limit: int | None = None,
+    raw_output_line_limit: int | None = None,
 ) -> dict[str, Any]:
     async with _SSH_SEMAPHORE:
         started = time.perf_counter()
@@ -132,6 +157,8 @@ async def _run_ssh(
                 transport="ssh",
                 settings=settings,
                 data=context,
+                raw_output_byte_limit=raw_output_byte_limit,
+                raw_output_line_limit=raw_output_line_limit,
             )
         except TimeoutError:
             return error_result(
@@ -188,9 +215,13 @@ def _command_payload(
     transport: str,
     settings: MCPSettings,
     data: dict[str, Any] | None = None,
+    raw_output_byte_limit: int | None = None,
+    raw_output_line_limit: int | None = None,
 ) -> dict[str, Any]:
-    out = truncate_text(stdout, max_bytes=settings.raw_output_byte_limit, max_lines=settings.raw_output_line_limit)
-    err = truncate_text(stderr, max_bytes=settings.raw_output_byte_limit, max_lines=settings.raw_output_line_limit)
+    max_bytes = raw_output_byte_limit or settings.raw_output_byte_limit
+    max_lines = raw_output_line_limit or settings.raw_output_line_limit
+    out = truncate_text(stdout, max_bytes=max_bytes, max_lines=max_lines)
+    err = truncate_text(stderr, max_bytes=max_bytes, max_lines=max_lines)
     result = CommandResult(
         ok=exit_code == 0,
         tool=tool,

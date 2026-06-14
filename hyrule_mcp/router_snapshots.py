@@ -82,7 +82,14 @@ def _normalized_jsonl(router: str, raw: Any) -> bytes:
 
 
 async def snapshot_router(router: str, output_dir: Path, *, ingest_url: str | None, ingest_token: str | None) -> dict[str, Any]:
-    result = await execute_args(router, _command(router), timeout_s=120, tool="bgp_snapshot")
+    result = await execute_args(
+        router,
+        _command(router),
+        timeout_s=120,
+        tool="bgp_snapshot",
+        raw_output_byte_limit=100_000_000,
+        raw_output_line_limit=5_000_000,
+    )
     if not result.get("ok"):
         return {"router": router, "ok": False, "error": result.get("sanitized_error") or result.get("stderr")}
 

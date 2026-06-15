@@ -28,6 +28,35 @@ def validate_action_authorization(
             error_type="policy_blocked",
             sanitized_error="HYRULE_MCP_ENABLE_ACTIONS is not enabled.",
         )
+    return validate_signed_authorization(
+        tool=tool,
+        action_class=action_class,
+        target=target,
+        action_authorization=action_authorization,
+        settings=settings,
+        host=host,
+        service=service,
+    )
+
+
+def validate_signed_authorization(
+    *,
+    tool: str,
+    action_class: str,
+    target: str | None,
+    action_authorization: dict[str, Any] | None,
+    settings: MCPSettings = SETTINGS,
+    host: str | None = None,
+    service: str | None = None,
+) -> dict[str, Any] | None:
+    """Validate the signed-authorization payload only: signing secret, required
+    fields, action-class match, expiry, HMAC signature, and host/service
+    allowlist.
+
+    The feature-flag gate (``enable_actions`` / ``enable_noop_guards``) is the
+    caller's responsibility, so this core is shared by the privileged action
+    tools and the no-op rollback guards without coupling their enable flags.
+    """
     if not settings.action_signing_secret:
         return _blocked(tool, target, "Action signing secret is not configured.", "missing_secret")
     if not isinstance(action_authorization, dict):

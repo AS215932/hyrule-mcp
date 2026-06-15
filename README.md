@@ -135,11 +135,40 @@ NOC Agent connects to `http://127.0.0.1:8765/mcp`.
 | Host & services | `os_systemd_status`, `os_journalctl`, `vault_agent_status` |
 | DNS & WireGuard | `dns_dig`, `knot_zone_status`, `wg_show` |
 
+## No-op rollback guards
+
+A human-gated, deliberately inert prepare/confirm/rollback state machine for
+NOC remediation. In `mode="noop"` it never restarts a service or touches
+FRR/PF/nftables/WireGuard — only guard JSON files under the guard directory.
+Real execution stays behind the separate `HYRULE_MCP_ENABLE_ACTIONS` flag.
+
+Tools (exposed only when `HYRULE_MCP_ENABLE_NOOP_GUARDS=1`):
+
+- `prepare_commit_confirm` — create a pending guard for a signed proposal
+- `confirm_change` — confirm a pending guard
+- `rollback_change` — roll back a pending guard
+- `get_pending_rollback_guards` — read-only list of pending guards
+
+Every mutating call requires a signed authorization with
+`action_class="noop_rollback_guard"` (same HMAC scheme as the action tools,
+validated by `validate_signed_authorization`). `operator`, `action_id`, and the
+proposal (`case_id`) are taken from the signed payload. Settings:
+
+```
+HYRULE_MCP_ENABLE_NOOP_GUARDS=0
+HYRULE_MCP_ROLLBACK_GUARD_DIR=/var/lib/hyrule-mcp/rollback
+HYRULE_MCP_ROLLBACK_GUARD_DEFAULT_TTL_S=300
+```
+
+Guard statuses: `pending` → `confirmed` | `rolled_back` | `expired` (a guard
+past its TTL is marked `expired` and excluded from the pending list).
+
 ## Safety model
 
 - Diagnostic tools are read-biased; write tools are shadow-mode gated.
 - Resource-heavy operations (packet captures, DNS bursts, SSH fan-out) are capped server-side.
 - Raw SSH is a bounded escape hatch and rejects mutative command patterns.
+- No-op rollback guards (`HYRULE_MCP_ENABLE_NOOP_GUARDS`) never mutate a service; signed `noop_rollback_guard` authorization required.
 
 ## Related repositories
 

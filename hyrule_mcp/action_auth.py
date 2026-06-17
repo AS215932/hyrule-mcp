@@ -38,6 +38,8 @@ def validate_action_authorization(
         settings=settings,
         host=host,
         service=service,
+        allowed_hosts=allowed_hosts,
+        allowed_services=allowed_services,
     )
 
 
@@ -50,6 +52,8 @@ def validate_signed_authorization(
     settings: MCPSettings = SETTINGS,
     host: str | None = None,
     service: str | None = None,
+    allowed_hosts: set[str] | None = None,
+    allowed_services: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """Validate the signed-authorization payload only: signing secret, required
     fields, action-class match, expiry, HMAC signature, and host/service

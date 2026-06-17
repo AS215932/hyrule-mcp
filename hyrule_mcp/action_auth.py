@@ -19,6 +19,8 @@ def validate_action_authorization(
     settings: MCPSettings = SETTINGS,
     host: str | None = None,
     service: str | None = None,
+    allowed_hosts: set[str] | None = None,
+    allowed_services: set[str] | None = None,
 ) -> dict[str, Any] | None:
     if not settings.enable_actions:
         return error_result(
@@ -58,9 +60,14 @@ def validate_action_authorization(
     if not supplied or not hmac.compare_digest(supplied, expected):
         return _blocked(tool, target, "Action authorization signature is invalid.", "invalid_signature")
 
-    if host and settings.action_allowed_hosts and host not in settings.action_allowed_hosts:
+    # Acks pass their own (broader) allowlist; mutating actions fall back to the
+    # restart allowlist. A '*' member means "any". An empty allowlist means
+    # unrestricted (preserves prior behaviour for the restart classes).
+    host_allow = settings.action_allowed_hosts if allowed_hosts is None else allowed_hosts
+    service_allow = settings.action_allowed_services if allowed_services is None else allowed_services
+    if host and host_allow and "*" not in host_allow and host not in host_allow:
         return _blocked(tool, target, f"Host '{sanitize_text(host)}' is outside the action allowlist.", "host_not_allowed")
-    if service and settings.action_allowed_services and service not in settings.action_allowed_services:
+    if service and service_allow and "*" not in service_allow and service not in service_allow:
         return _blocked(tool, target, f"Service '{sanitize_text(service)}' is outside the action allowlist.", "service_not_allowed")
     return None
 

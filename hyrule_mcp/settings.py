@@ -52,6 +52,11 @@ class MCPSettings:
     action_signing_secret: str = ""
     action_allowed_hosts: set[str] = field(default_factory=set)
     action_allowed_services: set[str] = field(default_factory=set)
+    # Acknowledging an Icinga problem is far lower-risk than a mutating action
+    # (reversible, expiring, only mutes notifications), so acks use their own,
+    # broader allowlist. Default {'*'} = any monitored host/service.
+    ack_allowed_hosts: set[str] = field(default_factory=lambda: {"*"})
+    ack_allowed_services: set[str] = field(default_factory=lambda: {"*"})
     command_timeout_s: int = 30
     raw_output_line_limit: int = 100
     raw_output_byte_limit: int = 16_384
@@ -103,6 +108,8 @@ class MCPSettings:
             action_signing_secret=os.getenv("HYRULE_MCP_ACTION_SIGNING_SECRET", os.getenv("NOC_APPROVAL_SIGNING_SECRET", "")),
             action_allowed_hosts=_csv_set(os.getenv("HYRULE_MCP_ACTION_ALLOWED_HOSTS", "")),
             action_allowed_services=_csv_set(os.getenv("HYRULE_MCP_ACTION_ALLOWED_SERVICES", "")),
+            ack_allowed_hosts=_csv_set(os.getenv("HYRULE_MCP_ACK_ALLOWED_HOSTS", "*")),
+            ack_allowed_services=_csv_set(os.getenv("HYRULE_MCP_ACK_ALLOWED_SERVICES", "*")),
             command_timeout_s=int(os.getenv("HYRULE_MCP_COMMAND_TIMEOUT_S", str(cls.command_timeout_s))),
             raw_output_line_limit=int(os.getenv("HYRULE_MCP_RAW_OUTPUT_LINE_LIMIT", str(cls.raw_output_line_limit))),
             raw_output_byte_limit=int(os.getenv("HYRULE_MCP_RAW_OUTPUT_BYTE_LIMIT", str(cls.raw_output_byte_limit))),

@@ -374,6 +374,75 @@ def test_approved_icinga_acknowledge_posts_action(monkeypatch):
     assert FakeAsyncClient.seen[0][2]["params"]["type"] == "Service"
 
 
+def test_icinga_ack_passes_expiry_and_notify(monkeypatch):
+    settings = replace(SETTINGS, enable_actions=True, action_signing_secret="sign-me")
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+    FakeAsyncClient.responses = [_response({"results": [{"code": 200.0, "status": "Acknowledged"}]})]
+    FakeAsyncClient.seen = []
+    monkeypatch.setattr(diagnostics.httpx, "AsyncClient", FakeAsyncClient)
+
+    deadline = int(time.time()) + 3600
+    result = run(
+        mcp_server.icinga_acknowledge_alert(
+            "noc", "disk", "noc-agent", "auto-snooze",
+            action_authorization=_auth(action_class="acknowledge_icinga"),
+            expiry=deadline,
+            notify=False,
+        )
+    )
+
+    assert result["ok"] is True
+    body = FakeAsyncClient.seen[0][2]["json"]
+    assert body["expiry"] == deadline  # auto-clears at the deadline
+    assert body["notify"] is False
+
+
+def test_icinga_ack_uses_broad_ack_allowlist_not_restart_allowlist(monkeypatch):
+    # Restart allowlist is narrow (noc only); acks use their own broad allowlist,
+    # so the agent can ack a host it could never restart.
+    settings = replace(
+        SETTINGS,
+        enable_actions=True,
+        action_signing_secret="sign-me",
+        action_allowed_hosts={"noc"},
+        action_allowed_services={"node_exporter"},
+        ack_allowed_hosts={"*"},
+        ack_allowed_services={"*"},
+    )
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+    FakeAsyncClient.responses = [_response({"results": [{"code": 200.0, "status": "Acknowledged"}]})]
+    FakeAsyncClient.seen = []
+    monkeypatch.setattr(diagnostics.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = run(
+        mcp_server.icinga_acknowledge_alert(
+            "rtr", "disk", "noc-agent", "investigating",
+            action_authorization=_auth(action_class="acknowledge_icinga"),
+        )
+    )
+    assert result["ok"] is True  # rtr/disk allowed for acks despite the restart allowlist
+
+
+def test_icinga_ack_respects_ack_allowlist_when_restricted(monkeypatch):
+    settings = replace(
+        SETTINGS,
+        enable_actions=True,
+        action_signing_secret="sign-me",
+        ack_allowed_hosts={"noc"},
+        ack_allowed_services={"*"},
+    )
+    monkeypatch.setattr(diagnostics, "SETTINGS", settings)
+
+    result = run(
+        mcp_server.icinga_acknowledge_alert(
+            "rtr", "disk", "noc-agent", "x",
+            action_authorization=_auth(action_class="acknowledge_icinga"),
+        )
+    )
+    assert result["ok"] is False
+    assert result["data"]["reason"] == "host_not_allowed"
+
+
 def test_tcpdump_capture_enforces_resource_caps(monkeypatch):
     seen = {}
 

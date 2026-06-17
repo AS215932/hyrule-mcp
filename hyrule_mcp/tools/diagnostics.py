@@ -482,6 +482,8 @@ async def icinga_acknowledge_alert(
     author: str,
     comment: str,
     action_authorization: dict[str, Any] | None = None,
+    expiry: int | float | None = None,
+    notify: bool = True,
 ) -> dict[str, Any]:
     tool = "icinga_acknowledge_alert"
     blocked = validate_action_authorization(
@@ -492,6 +494,8 @@ async def icinga_acknowledge_alert(
         settings=SETTINGS,
         host=host_name,
         service=service_name or "",
+        allowed_hosts=SETTINGS.ack_allowed_hosts,
+        allowed_services=SETTINGS.ack_allowed_services,
     )
     if blocked:
         return blocked
@@ -499,6 +503,11 @@ async def icinga_acknowledge_alert(
     filter_str = f'host.name=="{host_name}"'
     if service_name:
         filter_str += f' && service.name=="{service_name}"'
+    # An expiry makes the ack auto-clear at that unix time, so an autonomous ack
+    # never permanently masks a problem — it re-surfaces if still failing.
+    body: dict[str, Any] = {"author": author, "comment": comment, "notify": bool(notify)}
+    if expiry is not None:
+        body["expiry"] = int(expiry)
     try:
         async with httpx.AsyncClient(timeout=10, verify=SETTINGS.icinga_verify_tls) as client:
             response = await client.post(
@@ -506,7 +515,7 @@ async def icinga_acknowledge_alert(
                 params={"type": type_param, "filter": filter_str},
                 headers={"Accept": "application/json"},
                 auth=(SETTINGS.icinga_api_user, SETTINGS.icinga_api_password),
-                json={"author": author, "comment": comment},
+                json=body,
             )
             response.raise_for_status()
         return _result(ToolResult(tool=tool, target=host_name, summary="Icinga alert acknowledged", data={"response": response.json()}))

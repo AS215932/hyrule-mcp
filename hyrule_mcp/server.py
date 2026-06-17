@@ -9,7 +9,7 @@ import uvicorn
 from mcp.server.fastmcp import FastMCP
 from starlette.responses import JSONResponse
 
-from hyrule_mcp.tools import diagnostics
+from hyrule_mcp.tools import diagnostics, rollback
 
 
 structlog.configure(
@@ -39,6 +39,18 @@ def action_tool():
     from hyrule_mcp.settings import SETTINGS
 
     if SETTINGS.enable_actions:
+        return mcp.tool()
+
+    def _skip(fn):
+        return fn
+
+    return _skip
+
+
+def noop_guard_tool():
+    from hyrule_mcp.settings import SETTINGS
+
+    if SETTINGS.enable_noop_guards:
         return mcp.tool()
 
     def _skip(fn):
@@ -85,6 +97,10 @@ def register_tools() -> None:
     action_tool()(diagnostics.os_systemd_restart)
     action_tool()(diagnostics.os_service_restart)
     action_tool()(diagnostics.icinga_acknowledge_alert)
+    noop_guard_tool()(rollback.prepare_commit_confirm)
+    noop_guard_tool()(rollback.confirm_change)
+    noop_guard_tool()(rollback.rollback_change)
+    noop_guard_tool()(rollback.get_pending_rollback_guards)
 
 
 register_tools()

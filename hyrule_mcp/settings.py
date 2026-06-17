@@ -49,6 +49,9 @@ class MCPSettings:
     icinga_api_password: str = ""
     icinga_verify_tls: bool = False
     enable_actions: bool = False
+    enable_noop_guards: bool = False
+    rollback_guard_dir: str = "/var/lib/hyrule-mcp/rollback"
+    rollback_guard_default_ttl_s: int = 300
     action_signing_secret: str = ""
     action_allowed_hosts: set[str] = field(default_factory=set)
     action_allowed_services: set[str] = field(default_factory=set)
@@ -105,6 +108,9 @@ class MCPSettings:
             icinga_api_password=os.getenv("ICINGA_API_PASSWORD", ""),
             icinga_verify_tls=os.getenv("ICINGA_VERIFY_TLS", "0") == "1",
             enable_actions=os.getenv("HYRULE_MCP_ENABLE_ACTIONS", "0") == "1",
+            enable_noop_guards=os.getenv("HYRULE_MCP_ENABLE_NOOP_GUARDS", "0") == "1",
+            rollback_guard_dir=os.getenv("HYRULE_MCP_ROLLBACK_GUARD_DIR", cls.rollback_guard_dir),
+            rollback_guard_default_ttl_s=int(os.getenv("HYRULE_MCP_ROLLBACK_GUARD_DEFAULT_TTL_S", str(cls.rollback_guard_default_ttl_s))),
             action_signing_secret=os.getenv("HYRULE_MCP_ACTION_SIGNING_SECRET", os.getenv("NOC_APPROVAL_SIGNING_SECRET", "")),
             action_allowed_hosts=_csv_set(os.getenv("HYRULE_MCP_ACTION_ALLOWED_HOSTS", "")),
             action_allowed_services=_csv_set(os.getenv("HYRULE_MCP_ACTION_ALLOWED_SERVICES", "")),

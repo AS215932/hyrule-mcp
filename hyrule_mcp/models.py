@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 SCHEMA_VERSION = "2026-05-15.v1"
+SensitivityClass = Literal["public", "internal", "restricted", "secret"]
 
 
 class TruncatedText(BaseModel):
@@ -29,6 +30,9 @@ class McpToolError(BaseModel):
     stderr: str | None = None
     exit_code: int | None = None
     duration_ms: int | None = None
+    evidence_id: str | None = None
+    sensitivity_class: SensitivityClass = "internal"
+    raw_ref: str | None = None
     truncated: bool = False
     returned_bytes: int = 0
     returned_lines: int = 0
@@ -47,6 +51,9 @@ class ToolResult(BaseModel):
     stderr: str | None = None
     exit_code: int | None = None
     duration_ms: int | None = None
+    evidence_id: str | None = None
+    sensitivity_class: SensitivityClass = "internal"
+    raw_ref: str | None = None
     truncated: bool = False
     returned_bytes: int = 0
     returned_lines: int = 0
@@ -92,4 +99,3 @@ class ProbeResult(ToolResult):
 
 class DnsProbeResult(ToolResult):
     pass
-

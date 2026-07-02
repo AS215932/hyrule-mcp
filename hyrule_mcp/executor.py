@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import shlex
 import time
 from typing import Any
@@ -342,6 +343,24 @@ def _command_payload(
     max_lines = raw_output_line_limit or settings.raw_output_line_limit
     out = truncate_text(stdout, max_bytes=max_bytes, max_lines=max_lines)
     err = truncate_text(stderr, max_bytes=max_bytes, max_lines=max_lines)
+    evidence_id = _evidence_id(
+        tool=tool,
+        target=target,
+        transport=transport,
+        data=data,
+        stdout=out.text,
+        stderr=err.text,
+        exit_code=exit_code,
+    )
+    evidence_ref = {
+        "ref": f"mcp://{target}/{tool}/{evidence_id}",
+        "kind": "mcp_command",
+        "evidence_id": evidence_id,
+        "sensitivity_class": "internal",
+        "raw_ref": f"mcp://{target}/{tool}/{evidence_id}",
+    }
+    result_data = dict(data or {})
+    result_data["evidence_ref"] = evidence_ref
     result = CommandResult(
         ok=exit_code == 0,
         tool=tool,
@@ -354,12 +373,44 @@ def _command_payload(
         truncated=out.truncated or err.truncated,
         returned_bytes=out.returned_bytes + err.returned_bytes,
         returned_lines=out.returned_lines + err.returned_lines,
+        evidence_id=evidence_id,
+        sensitivity_class="internal",
+        raw_ref=evidence_ref["raw_ref"],
         error_type=None if exit_code == 0 else "command_failed",
         sanitized_error=None if exit_code == 0 else (err.text or "Command exited non-zero"),
         transport=transport,
-        data=data,
+        data=result_data,
     )
     return dump_result(result)
+
+
+def _evidence_id(
+    *,
+    tool: str,
+    target: str,
+    transport: str,
+    data: dict[str, Any] | None,
+    stdout: str,
+    stderr: str,
+    exit_code: int | None,
+) -> str:
+    payload = {
+        "tool": tool,
+        "target": target,
+        "transport": transport,
+        "data": data or {},
+        "stdout": stdout,
+        "stderr": stderr,
+        "exit_code": exit_code,
+    }
+    raw = json_dumps_stable(payload)
+    return "ev_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def json_dumps_stable(payload: dict[str, Any]) -> str:
+    import json
+
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def _is_local_target(profile: HostProfile, settings: MCPSettings) -> bool:

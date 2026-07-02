@@ -7,6 +7,14 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "agent-core"
+version = "0.7.0"
+source = { git = "https://github.com/AS215932/agent-core?tag=v0.7.0#6f79630aeab6f5d9019671fe612a153e286f5321" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.4"
 source = { registry = "https://pypi.org/simple" }
@@ -334,6 +342,7 @@ name = "hyrule-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "agent-core" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "mcp" },
@@ -353,6 +362,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-core", git = "https://github.com/AS215932/agent-core?tag=v0.7.0" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "mcp", specifier = ">=1.27.0" },

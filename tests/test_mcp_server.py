@@ -185,6 +185,26 @@ def test_ssh_transport_errors_include_command_context(monkeypatch):
     assert result["data"]["exception_type"] == "RuntimeError"
 
 
+def test_command_results_include_evidence_reference():
+    from agent_core.contracts import SourceRef
+
+    settings = replace(
+        _settings_with_hosts(ci={"address": "ci"}),
+        local_aliases={"ci"},
+        command_timeout_s=5,
+    )
+
+    result = run(executor.execute_args("ci", ["/bin/echo", "ok"], settings=settings, tool="diagnostic_echo"))
+
+    assert result["ok"] is True
+    assert result["evidence_id"].startswith("ev_")
+    assert result["sensitivity_class"] == "internal"
+    assert result["raw_ref"].endswith(result["evidence_id"])
+    assert result["data"]["evidence_ref"]["evidence_id"] == result["evidence_id"]
+    source_ref = SourceRef.model_validate(result["data"]["evidence_ref"])
+    assert source_ref.ref == result["raw_ref"]
+
+
 def test_wrapper_tools_construct_allowlisted_commands(monkeypatch):
     calls = []
 

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "MCP server exposing AS215932 infrastructure tools (SSH, Prometheus, Icinga2, FRR, DNS)"
 requires-python = ">=3.14"
 dependencies = [
+    "agent-core",
     "mcp>=1.27.0",
     "paramiko>=4.0.0",
     "httpx>=0.28",
@@ -12,6 +13,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
 ]
+
+[tool.uv.sources]
+agent-core = { git = "https://github.com/AS215932/agent-core", tag = "v0.7.0" }
 
 [dependency-groups]
 dev = [
